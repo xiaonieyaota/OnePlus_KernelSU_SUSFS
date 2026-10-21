@@ -14,12 +14,12 @@
 # ================================================================
 
 # 是否启用自定义提交 (true/false)
-custom=false
+custom=true
 
 # ==================== SUSFS 各分支的 commit hash ====================
 # 仅当 custom=true 时生效
-gki-android12-5.10=
-gki-android13-5.15=
-gki-android14-6.1=
-gki-android15-6.6=
-gki-android16-6.12=
+gki-android12-5.10=ca7093a1a26f7911987110c34a1352d74cfb1
+gki-android13-5.15=2ad297356931ba06b4edc0860f42fdd143b02ffd
+gki-android14-6.1=5369359dbd10f6dd8cbdd59d1df7b788b29b168c
+gki-android15-6.6=2d11d711de80f0f749b3055f8da8f7b9682454e4
+gki-android16-6.12=acb92d4abc922cac384a207744b2db40281a7c7f
