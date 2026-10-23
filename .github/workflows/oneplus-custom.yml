@@ -179,6 +179,7 @@ on:
           - SukiSU
           - BakaSU
           - FinaSU
+          - FinaSU-dev
         default: BakaSU
       custom_version:
         description: '自定义版本名（可选）'
@@ -359,7 +360,8 @@ jobs:
           device=$(echo "$device" | jq -c --argjson dn "$dn" '.ds = $dn | .ntsync = $dn')
           echo "Droidspaces/NTSync override: $dn"
 
-          # KernelSU 变体（固定默认分支：SukiSU→builtin, BakaSU→main, FinaSU→master）
+          # KernelSU 变体（固定默认分支：SukiSU→builtin, BakaSU→main,
+          # FinaSU→master, FinaSU-dev→dev）
           ksu_variant='${{ inputs.ksu_variant }}'
           case "$ksu_variant" in
             SukiSU)
@@ -372,6 +374,11 @@ jobs:
               ;;
             FinaSU)
               ksu_hash="master"
+              KSU_REPO="LyraVoid/FinaSU"
+              ;;
+            FinaSU-dev)
+              # dev 渠道：管理器由 FinaSU dev 分支 CI 产出，内核跟随 dev
+              ksu_hash="dev"
               KSU_REPO="LyraVoid/FinaSU"
               ;;
             *)
@@ -406,7 +413,7 @@ jobs:
             echo "| Setting | Value |"
             echo "|---------|-------|"
             echo "| Device | \`${{ steps.set-matrix.outputs.model_display }}\` |"
-            echo "| KernelSU | \`${{ inputs.ksu_variant }}\` @ \`${{ inputs.ksu_variant == 'SukiSU' && 'builtin' || (inputs.ksu_variant == 'FinaSU' && 'master' || 'main') }}\` |"
+            echo "| KernelSU | \`${{ inputs.ksu_variant }}\` @ \`${{ inputs.ksu_variant == 'SukiSU' && 'builtin' || (inputs.ksu_variant == 'FinaSU' && 'master' || (inputs.ksu_variant == 'FinaSU-dev' && 'dev' || 'main')) }}\` |"
             echo "| Re-Kernel | ${{ inputs.use_rekernel && '✅ enabled' || '❌ disabled' }} |"
             echo "| Optimization | \`${{ inputs.optimize_level }}\` |"
             echo "| Droidspaces & NTSync | ${{ inputs.enable_droidspaces_ntsync && '✅ enabled' || '❌ disabled' }} |"

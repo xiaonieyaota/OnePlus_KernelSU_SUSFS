@@ -36,7 +36,7 @@ This repository builds **OnePlus (Oppo/Realme) device kernels** with GitHub Acti
 
 | Feature | Description |
 |:---|:---|
-| 🔐 KernelSU Variants | Supports SukiSU / BakaSU / FinaSU variants, selectable at build time |
+| 🔐 KernelSU Variants | Supports SukiSU / BakaSU / FinaSU variants (plus the `FinaSU-dev` development channel), selectable at build time |
 | 🙈 SUSFS | Kernel-level hiding working with KSU to complete environment spoofing |
 | 🔔 Re-Kernel | Optional Re-Kernel driver integration |
 | 🛡️ BBG (Baseband Guard) | LSM-based protection for critical device partitions; abl/efisp whitelist for exploit devices |
@@ -54,12 +54,14 @@ This repository builds **OnePlus (Oppo/Realme) device kernels** with GitHub Acti
 1. **Fork this repository** (or use it directly)
 2. Go to the **Actions** page and pick a workflow:
    - `Build and Release OnePlus Kernels` — batch build by Android version or GKI filter, optionally publish a Release
-   - `OnePlus Custom Kernel Build` — pick one device (with kernel sub-version), choose SukiSU / BakaSU / FinaSU, custom version name & build time
+   - `OnePlus Custom Kernel Build` — pick one device (with kernel sub-version), choose SukiSU / BakaSU / FinaSU / FinaSU-dev, custom version name & build time
 3. Click **Run workflow** and fill in the parameters as needed
 4. Once the build finishes, download the **Artifacts** from the run page:
    - `AnyKernel3.zip` — flashable zip (recommended; flash via custom Recovery or KSU manager)
 
 > 💡 SUSFS refs are resolved automatically from [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) (latest `gki-androidXX-Y.Y` branch commit) — no manual input required. To pin a specific commit instead, see [Custom Commit Configuration](#-custom-commit-configuration).
+
+> 🧪 **FinaSU-dev**: picks the `dev` branch of FinaSU, aligns the kernel to the commit of the latest successful `build-manager.yml` run on that branch, and injects that build's manager certificate — so the dev manager APK is recognised. The artifact is named `FinaSU-dev-<ver>-<model>-<os>-AnyKernel3.zip`. If no dev CI build is found, the kernel follows `dev` HEAD and the certificate falls back to the latest FinaSU Release (same signing key).
 
 ## 🔧 Custom Commit Configuration
 
@@ -152,7 +154,7 @@ A commit is a hash string representing the state of a repository at a certain po
 
 | 特性 | 说明 |
 |:---|:---|
-| 🔐 KernelSU 变体 | 支持 SukiSU / BakaSU / FinaSU 变体，构建时按需选择 |
+| 🔐 KernelSU 变体 | 支持 SukiSU / BakaSU / FinaSU 变体（另含 `FinaSU-dev` 开发渠道），构建时按需选择 |
 | 🙈 SUSFS | 内核级隐藏，配合 KSU 完成环境伪装 |
 | 🔔 Re-Kernel | 可选集成 Re-Kernel 驱动 |
 | 🛡️ BBG 基带保护 | 基于 LSM 保护关键设备分区；efisp 漏洞设备可加入 abl/efisp 白名单 |
@@ -170,12 +172,14 @@ A commit is a hash string representing the state of a repository at a certain po
 1. **Fork 本仓库**（或直接使用本仓库）
 2. 进入 **Actions** 页面，选择工作流：
    - `Build and Release OnePlus Kernels` —— 按安卓版本或 GKI 过滤批量构建，可选发布 Release
-   - `OnePlus Custom Kernel Build` —— 选择单台设备（含内核子版本）、SukiSU / BakaSU / FinaSU、自定义版本名与构建时间
+   - `OnePlus Custom Kernel Build` —— 选择单台设备（含内核子版本）、SukiSU / BakaSU / FinaSU / FinaSU-dev、自定义版本名与构建时间
 3. 点击 **Run workflow**，按需填写参数
 4. 构建完成后，在本次运行页面下载 **Artifacts**：
    - `AnyKernel3.zip` —— 卡刷包（推荐，配合自定义 Recovery 或 KSU 管理器刷入）
 
 > 💡 SUSFS 引用自动从 [susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) 解析（对应 `gki-androidXX-Y.Y` 分支最新提交），无需手动填写。如需固定某个提交，见 [自定义提交配置](#-自定义提交配置)。
+
+> 🧪 **FinaSU-dev**：取 FinaSU 的 `dev` 分支，内核侧对齐到该分支最近一次成功的 `build-manager.yml` 构建提交，并注入该次构建的管理器证书，使 dev 管理器 APK 能被内核识别。产物命名为 `FinaSU-dev-<版本号>-<机型>-<系统>-AnyKernel3.zip`。若检索不到 dev 的 CI 构建，内核改为跟随 `dev` HEAD，证书回退到 FinaSU 最新 Release（同一签名密钥）。
 
 ## 🔧 自定义提交配置
 

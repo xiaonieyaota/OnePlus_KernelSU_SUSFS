@@ -38,6 +38,7 @@ on:
           - SukiSU
           - BakaSU
           - FinaSU
+          - FinaSU-dev
         default: BakaSU
       use_rekernel:
         description: '启用 Re-Kernel 驱动（默认关闭）'
@@ -110,7 +111,8 @@ jobs:
           
           input="${{ github.event.inputs.op_model }}"
           ksu_variant="${{ github.event.inputs.ksu_variant }}"
-          # 固定默认分支：SukiSU→builtin（内置 SUSFS）、BakaSU→main
+          # 固定默认分支：SukiSU→builtin（内置 SUSFS）、BakaSU→main、
+          # FinaSU→master（发行版渠道）、FinaSU-dev→dev（开发渠道）
           case "$ksu_variant" in
             SukiSU)
               ksu_hash="builtin"
@@ -121,8 +123,11 @@ jobs:
             FinaSU)
               ksu_hash="master"
               ;;
+            FinaSU-dev)
+              ksu_hash="dev"
+              ;;
             *)
-              echo "::error::Unsupported KernelSU variant: $ksu_variant (supported: SukiSU, BakaSU, FinaSU)"
+              echo "::error::Unsupported KernelSU variant: $ksu_variant (supported: SukiSU, BakaSU, FinaSU, FinaSU-dev)"
               exit 1
               ;;
           esac
@@ -218,7 +223,7 @@ jobs:
           elif [ "$ksu_type" == "BakaSU" ]; then
             KSU_REPO_OWNER="Baka-SU"
             KSU_REPO_NAME="BakaSU"
-          elif [ "$ksu_type" == "FinaSU" ]; then
+          elif [ "$ksu_type" == "FinaSU" ] || [ "$ksu_type" == "FinaSU-dev" ]; then
             KSU_REPO_OWNER="LyraVoid"
             KSU_REPO_NAME="FinaSU"
           else
@@ -1011,13 +1016,22 @@ jobs:
           ds_flag=${{ inputs.enable_droidspaces_ntsync }}
           JSON_BUILD_DATA=$(jq -c --argjson dn "$ds_flag" 'map(.ds = $dn | .ntsync = $dn)' ./downloaded-artifacts/matrix.json)
           
+          # AK3 名称形如 <ksu_type>-<ksu_ver>-<model>-<os>-AnyKernel3。
+          # 变体名本身可能带连字符（FinaSU-dev），必须按本次运行的变体前缀剥离，
+          # 否则 ksu_ver 会被解析成 "dev"
+          variant_prefix="${{ inputs.ksu_variant }}"
           for file in $(find downloaded-artifacts -maxdepth 1 -name "*-AnyKernel3.zip" -type f | sort); do
             if [ -f "$file" ]; then
               zipname=$(basename "$file" .zip)
               # <ksu_type>-<ksu_ver>-<model>-<os>-AnyKernel3 (model may contain hyphens)
               base="${zipname%-AnyKernel3}"
-              ksu_type="${base%%-*}"
-              rest="${base#*-}"
+              if [ -n "$variant_prefix" ] && [ "${base#"$variant_prefix"-}" != "$base" ]; then
+                ksu_type="$variant_prefix"
+                rest="${base#"$variant_prefix"-}"
+              else
+                ksu_type="${base%%-*}"
+                rest="${base#*-}"
+              fi
               ksu_ver="${rest%%-*}"
               model_os="${rest#*-}"
               os_version="${model_os##*-}"
@@ -1069,7 +1083,7 @@ jobs:
 
           case "$ksu_type" in
             SukiSU) KSU_REPO_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra" ;;
-            FinaSU) KSU_REPO_URL="https://github.com/LyraVoid/FinaSU" ;;
+            FinaSU|FinaSU-dev) KSU_REPO_URL="https://github.com/LyraVoid/FinaSU" ;;
             *)      KSU_REPO_URL="https://github.com/Baka-SU/BakaSU" ;;
           esac
 
@@ -1083,9 +1097,13 @@ jobs:
                 KSU_REPO_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra/commit/$RK_KSU_COMMIT"
                 ksu_ref="builtin @ ${RK_KSU_COMMIT:0:8}"
                 ;;
-              FinaSU)
+              FinaSU|FinaSU-dev)
                 KSU_REPO_URL="https://github.com/LyraVoid/FinaSU/commit/$RK_KSU_COMMIT"
-                ksu_ref="master @ ${RK_KSU_COMMIT:0:8}"
+                if [ "$ksu_type" = "FinaSU-dev" ]; then
+                  ksu_ref="dev @ ${RK_KSU_COMMIT:0:8}"
+                else
+                  ksu_ref="master @ ${RK_KSU_COMMIT:0:8}"
+                fi
                 ;;
               *)
                 KSU_REPO_URL="https://github.com/Baka-SU/BakaSU/commit/$RK_KSU_COMMIT"

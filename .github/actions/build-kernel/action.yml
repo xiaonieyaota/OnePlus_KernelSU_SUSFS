@@ -14,8 +14,9 @@ inputs:
       - SukiSU
       - BakaSU
       - FinaSU
+      - FinaSU-dev
   ksu_branch_or_hash:
-    description: 'KSU branch or commit hash (empty = auto-detect by ksu_type: SukiSU→builtin, BakaSU→main, FinaSU→master)'
+    description: 'KSU branch or commit hash (empty = auto-detect by ksu_type: SukiSU→builtin, BakaSU→main, FinaSU→master, FinaSU-dev→dev)'
     required: false
     type: string
     default: ""
@@ -1398,7 +1399,7 @@ runs:
 
     - name: Add FinaSU
       shell: bash
-      if: ${{ inputs.ksu_type == 'FinaSU' }}
+      if: ${{ contains(inputs.ksu_type, 'FinaSU') }}
       env:
         KSU_CERT_SIZE: ${{ inputs.ksu_cert_size }}
         KSU_CERT_HASH: ${{ inputs.ksu_cert_hash }}
@@ -1406,7 +1407,13 @@ runs:
         set -euo pipefail
         echo "::group::Add FinaSU"
         cd "$KERNEL_PLATFORM_FOLDER"
-        echo "Adding FinaSU..."
+        # FinaSU（发行版渠道）默认 master，FinaSU-dev（开发渠道）默认 dev。
+        # 两者内核树结构一致，只在默认分支、管理器来源与版本对齐上有区别。
+        case "${{ inputs.ksu_type }}" in
+          FinaSU-dev) KSU_DEFAULT_BRANCH="dev" ;;
+          *)          KSU_DEFAULT_BRANCH="master" ;;
+        esac
+        echo "Adding FinaSU (default branch: $KSU_DEFAULT_BRANCH)..."
         git clone https://github.com/LyraVoid/FinaSU.git KernelSU
         git submodule update --init --recursive || true
 
@@ -1524,11 +1531,11 @@ runs:
         KSU_VERSION=$(expr 30000 + $COMMITS)
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
         echo "KSU_COMMIT_DATE=$(git -C KernelSU log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S %z' 2>/dev/null || echo unknown)" >> $GITHUB_ENV
-        echo "FinaSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "${{ inputs.ksu_type }}" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
         echo "FinaSU Version: $KSU_VERSION"
-        echo "✅ FinaSU added (branch/commit: ${KSU_INPUT:-master}, sha: ${KSU_COMMIT_SHA:0:8})"
+        echo "✅ FinaSU added (${{ inputs.ksu_type }}, branch/commit: ${KSU_INPUT:-$KSU_DEFAULT_BRANCH}, sha: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
@@ -1547,9 +1554,10 @@ runs:
         echo "$susfs_version" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "SusFS Version: $susfs_version"
         
-        if [ "${{ inputs.ksu_type }}" == "FinaSU" ]; then
+        if [ "${{ inputs.ksu_type }}" == "FinaSU" ] || [ "${{ inputs.ksu_type }}" == "FinaSU-dev" ]; then
           # FinaSU 内核无内置 SUSFS 集成：应用 susfs4ksu 官方 10_enable 补丁 +
           # 本仓库维护的漂移修复（两步法，见 scripts/finasu_compat/apply.sh）
+          # dev 渠道与 master 同为 FinaSU 内核树，走同一套补丁流程
           SUSFS4KSU="$SUSFS_FOLDER" bash "$GITHUB_WORKSPACE/scripts/finasu_compat/apply.sh" "$KSU_FOLDER"
         else
           # SukiSU (builtin) / BakaSU (main) 内核代码已内置 SUSFS 集成 (config KSU_SUSFS)，
@@ -1653,7 +1661,7 @@ runs:
         # 8 参 security_context_to_sid_with_policy（新内核已删除 fake_state 定义），
         # >=6.6 的 6 参调用/声明归一化为 8 参（新模型签名）。脚本按 KernelSU
         # 实际形态自动跳过旧模型检出；幂等。FinaSU 由 finasu_compat 处理，跳过。
-        if [ "${{ inputs.ksu_type }}" != "FinaSU" ] && [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_selinux_new_model.sh" ]; then
+        if [ "${{ inputs.ksu_type }}" != "FinaSU" ] && [ "${{ inputs.ksu_type }}" != "FinaSU-dev" ] && [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_selinux_new_model.sh" ]; then
           bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_selinux_new_model.sh" "$KSU_FOLDER"
         fi
 

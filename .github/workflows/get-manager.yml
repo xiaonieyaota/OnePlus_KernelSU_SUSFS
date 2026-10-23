@@ -60,6 +60,10 @@ jobs:
           elif [ "${{ inputs.ksu_variant }}" == "FinaSU" ]; then
             echo "This is the FinaSU variant"
             git clone https://github.com/LyraVoid/FinaSU.git KernelSU
+          elif [ "${{ inputs.ksu_variant }}" == "FinaSU-dev" ]; then
+            echo "This is the FinaSU dev-channel variant"
+            # dev 渠道的管理器只由 dev 分支 CI 产出，版本号必须按 dev 的提交数计算
+            git clone --branch dev https://github.com/LyraVoid/FinaSU.git KernelSU
           else
             echo "Unknown variant"
             exit 1
@@ -72,7 +76,7 @@ jobs:
 
           if [ "${{ inputs.ksu_variant }}" == "SukiSU" ]; then
             KSU_VERSION=$((40000 + KSU_GIT_VERSION - 2815))
-          elif [ "${{ inputs.ksu_variant }}" == "FinaSU" ]; then
+          elif [ "${{ inputs.ksu_variant }}" == "FinaSU" ] || [ "${{ inputs.ksu_variant }}" == "FinaSU-dev" ]; then
             # FinaSU 内核 Kbuild 与管理器 build.gradle.kts 均以 30000 + git 提交数计算版本
             KSU_VERSION=$((30000 + KSU_GIT_VERSION))
           else
@@ -111,9 +115,15 @@ jobs:
             REPO="LyraVoid/FinaSU"
             KSUM="manager"
             EXPECTED_BRANCH="master"
+          elif [ "${{ inputs.ksu_variant }}" == "FinaSU-dev" ]; then
+            echo "FinaSU (dev channel)..."
+            REPO="LyraVoid/FinaSU"
+            KSUM="manager"
+            EXPECTED_BRANCH="dev"
           fi
 
           # ── FinaSU：只从官方 GitHub Release 拉取管理器（不走 CI 构建产物）──────────
+          # dev 渠道没有 Release，故意不进这个分支：它走下面的 CI 产物路径（dev 分支）
           if [ "${{ inputs.ksu_variant }}" == "FinaSU" ]; then
             REL_JSON=""
             for ATTEMPT in 1 2 3; do
@@ -242,7 +252,7 @@ jobs:
                 CREATED=$(printf '%s' "$RUNS" | jq -r ".workflow_runs[$INDEX].created_at")
                 # 认领官方默认分支上传的构建（push 与 workflow_dispatch 均可，
                 # 手动触发常用于正式上传前测试），跳过 PR / 其他分支构建
-                #（SukiSU/BakaSU 为 main，FinaSU 为 master）
+                #（SukiSU/BakaSU 为 main，FinaSU 为 master，FinaSU-dev 为 dev）
                 if [ "$HEAD_BRANCH" != "$EXPECTED_BRANCH" ] || { [ "$EVENT" != "push" ] && [ "$EVENT" != "workflow_dispatch" ]; }; then
                   echo "跳过构建 $BUILD_ID ($HEAD_BRANCH/$EVENT): 非官方 $EXPECTED_BRANCH 分支构建"
                   continue
@@ -257,6 +267,13 @@ jobs:
 
           if [ ! -s "$CAND_FILE" ]; then
             rm -f "$CAND_FILE"
+            # dev 渠道是自测渠道：拿不到 dev 的 CI 构建时不应阻断内核编译，
+            # 退化为"内核跟随 dev HEAD + 证书从最新 Release APK 提取"
+            # （dev/manifest 用同一套 KEYSTORE 签名，证书通常一致）
+            if [ "${{ inputs.ksu_variant }}" == "FinaSU-dev" ]; then
+              echo "::warning::未找到 FinaSU dev 分支上传的 Manager 构建，内核侧改为跟随 dev HEAD，证书回退到最新 Release APK"
+              exit 0
+            fi
             echo "未找到官方 $EXPECTED_BRANCH 分支上传的 Manager 构建。"
             exit 1
           fi
@@ -314,6 +331,10 @@ jobs:
           rm -f "$CAND_FILE"
 
           if [ -z "$MANAGER_VERSION" ]; then
+            if [ "${{ inputs.ksu_variant }}" == "FinaSU-dev" ]; then
+              echo "::warning::未获取到 FinaSU dev 分支最新 Manager artifact，内核侧改为跟随 dev HEAD，证书回退到最新 Release APK"
+              exit 0
+            fi
             echo "未获取到官方 $EXPECTED_BRANCH 分支最新上传的 Manager artifact。"
             exit 1
           fi
@@ -326,7 +347,7 @@ jobs:
             case "${{ inputs.ksu_variant }}" in
               BakaSU) PINNED_KSU_VERSION=$((30700 + PIN_COUNT)) ;;
               SukiSU) PINNED_KSU_VERSION=$((40000 + PIN_COUNT - 2815)) ;;
-              FinaSU) PINNED_KSU_VERSION=$((30000 + PIN_COUNT)) ;;
+              FinaSU|FinaSU-dev) PINNED_KSU_VERSION=$((30000 + PIN_COUNT)) ;;
               *)      PINNED_KSU_VERSION="" ;;
             esac
             if [ -n "$PINNED_KSU_VERSION" ]; then
@@ -356,7 +377,7 @@ jobs:
             find manager-artifacts -type f -name "*.apk" -print
           fi
 
-          if [ "${{ inputs.ksu_variant }}" == "FinaSU" ]; then
+          if [ "${{ inputs.ksu_variant }}" == "FinaSU" ] || [ "${{ inputs.ksu_variant }}" == "FinaSU-dev" ]; then
             # 从本次分发的管理器 APK 提取签名证书（DER），供内核侧第二信任槽
             # （EXPECTED_SIZE2/EXPECTED_HASH2）对齐。FinaSU 的内核只信任槽内
             # 签名的管理器，不注入证书时内核会转而信任上游 KernelSU 默认槽，
