@@ -1417,12 +1417,35 @@ runs:
         git clone https://github.com/LyraVoid/FinaSU.git KernelSU
         git submodule update --init --recursive || true
 
+        # 分支名 / tag / 提交号统一先解析成 commit SHA 再 --detach。
+        # 直接 `git checkout --detach <分支名>` 在本地还没有同名分支时会触发 git 的
+        # DWIM（自动从 origin/<branch> 建本地追踪分支），与 --detach 互斥而报
+        # "fatal: '--detach' cannot be used with '-b/-B/--orphan'"。
+        # master 因为 clone 后就存在同名本地分支所以不会踩到，dev/tag 会。
+        resolve_ksu_ref() {
+          local ref="$1" cand sha
+          for cand in "$ref" "origin/$ref" "refs/tags/$ref" "refs/remotes/origin/$ref"; do
+            if sha=$(git -C KernelSU rev-parse --verify --quiet "${cand}^{commit}" 2>/dev/null); then
+              printf '%s' "$sha"
+              return 0
+            fi
+          done
+          if git -C KernelSU fetch --quiet origin "$ref" 2>/dev/null \
+             && sha=$(git -C KernelSU rev-parse --verify --quiet 'FETCH_HEAD^{commit}' 2>/dev/null); then
+            printf '%s' "$sha"
+            return 0
+          fi
+          return 1
+        }
+
         KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
         if [ -n "$KSU_INPUT" ]; then
-          if ! git -C KernelSU checkout --detach "$KSU_INPUT" 2>/dev/null; then
-            git -C KernelSU fetch origin "$KSU_INPUT"
-            git -C KernelSU checkout --detach "$KSU_INPUT"
+          if ! KSU_RESOLVED_SHA=$(resolve_ksu_ref "$KSU_INPUT"); then
+            echo "::error::KernelSU ref '$KSU_INPUT' 在 LyraVoid/FinaSU 中不存在（分支/tag/提交号均未命中）"
+            exit 1
           fi
+          git -C KernelSU checkout --detach "$KSU_RESOLVED_SHA"
+          echo "KernelSU 已检出 $KSU_INPUT → ${KSU_RESOLVED_SHA:0:8}"
         fi
 
         # 内核侧检出到官方最新上传 Manager 构建的同一提交
@@ -1430,11 +1453,12 @@ runs:
         # 保证内核 KSU 版本与拉取的管理器安装包严格一致
         KSU_COMMIT="${{ inputs.ksu_commit }}"
         if [ -n "$KSU_COMMIT" ]; then
-          if ! git -C KernelSU checkout --detach "$KSU_COMMIT" 2>/dev/null; then
-            git -C KernelSU fetch origin "$KSU_COMMIT"
-            git -C KernelSU checkout --detach "$KSU_COMMIT"
+          if ! KSU_ALIGN_SHA=$(resolve_ksu_ref "$KSU_COMMIT"); then
+            echo "::error::KernelSU 检出官方构建提交 $KSU_COMMIT 失败，无法对齐管理器版本"
+            exit 1
           fi
-          if [ "$(git -C KernelSU rev-parse HEAD)" != "$KSU_COMMIT" ]; then
+          git -C KernelSU checkout --detach "$KSU_ALIGN_SHA"
+          if [ "$(git -C KernelSU rev-parse HEAD)" != "$KSU_ALIGN_SHA" ]; then
             echo "::error::KernelSU 检出官方构建提交 $KSU_COMMIT 失败，无法对齐管理器版本"
             exit 1
           fi
@@ -1554,11 +1578,17 @@ runs:
         echo "$susfs_version" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
         echo "SusFS Version: $susfs_version"
         
-        if [ "${{ inputs.ksu_type }}" == "FinaSU" ] || [ "${{ inputs.ksu_type }}" == "FinaSU-dev" ]; then
+        if [ "${{ inputs.ksu_type }}" == "FinaSU" ]; then
           # FinaSU 内核无内置 SUSFS 集成：应用 susfs4ksu 官方 10_enable 补丁 +
           # 本仓库维护的漂移修复（两步法，见 scripts/finasu_compat/apply.sh）
-          # dev 渠道与 master 同为 FinaSU 内核树，走同一套补丁流程
           SUSFS4KSU="$SUSFS_FOLDER" bash "$GITHUB_WORKSPACE/scripts/finasu_compat/apply.sh" "$KSU_FOLDER"
+        elif [ "${{ inputs.ksu_type }}" == "FinaSU-dev" ]; then
+          # FinaSU dev 分支已内置 SUSFS 集成（kernel/extension/susfs.c +
+          # Kconfig 的 KSU_SUSFS 菜单 + Kbuild 的 kernelsu-$(CONFIG_KSU_SUSFS)），
+          # 与 SukiSU/BakaSU 同路子：只在 defconfig 打开 CONFIG_KSU_SUSFS 即可。
+          # 再套 10_enable 补丁反而会与 dev 重构过的 init.c / selinux_hide.c /
+          # sucompat.c / setuid_hook.c / dispatch.c 冲突（漂移补丁按 master 生成）
+          echo "FinaSU-dev 内核已内置 SUSFS 支持，跳过 KSU 树 SUSFS 补丁"
         else
           # SukiSU (builtin) / BakaSU (main) 内核代码已内置 SUSFS 集成 (config KSU_SUSFS)，
           # 无需再对 KSU 树打 10_enable_susfs_for_ksu.patch，仅保留内核侧 SUSFS 补丁。
