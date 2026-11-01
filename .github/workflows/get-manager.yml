@@ -24,6 +24,9 @@ on:
       ksuCommit:
         description: "内核侧对齐用的提交 SHA（正式=Release 标签/官方构建提交；最新=SukiSU/BakaSU 默认分支 HEAD，FinaSU 最新构建提交）"
         value: ${{ jobs.get_ksu_manager.outputs.ksuCommit }}
+      ksuBranch:
+        description: "内核侧对齐提交所在的分支或 Release 标签（发布说明展示用）"
+        value: ${{ jobs.get_ksu_manager.outputs.ksuBranch }}
       channelTag:
         description: "正式通道选用的 Release 标签（无正式版或最新通道时为空）"
         value: ${{ jobs.get_ksu_manager.outputs.channelTag }}
@@ -46,6 +49,8 @@ jobs:
       managerVer: ${{ steps.add_KSU.outputs.managerVer }}
       # 输出4: 内核侧对齐用的提交 SHA
       ksuCommit: ${{ steps.add_KSU.outputs.ksuCommit }}
+      # 输出4b: 内核侧对齐提交所在分支/标签
+      ksuBranch: ${{ steps.add_KSU.outputs.ksuBranch }}
       # 输出5: 正式通道选用的 Release 标签
       channelTag: ${{ steps.add_KSU.outputs.channelTag }}
       # 输出6/7: FinaSU 管理器签名证书（内核第二信任槽对齐用）
@@ -260,6 +265,7 @@ jobs:
                 {
                   echo "managerVer=$MANAGER_VERSION"
                   echo "ksuCommit=$REL_COMMIT"
+                  echo "ksuBranch=$REL_TAG"
                   echo "channelTag=$REL_TAG"
                 } >> $GITHUB_OUTPUT
 
@@ -377,6 +383,7 @@ jobs:
             echo "MANAGER_VERSION=$MANAGER_VERSION" >> $GITHUB_ENV
             echo "managerVer=$MANAGER_VERSION" >> $GITHUB_OUTPUT
             echo "ksuCommit=$KSU_COMMIT" >> $GITHUB_OUTPUT
+            echo "ksuBranch=$REL_TAG" >> $GITHUB_OUTPUT
             echo "managerCertSize=$CERT_SIZE" >> $GITHUB_OUTPUT
             echo "managerCertHash=$CERT_HASH" >> $GITHUB_OUTPUT
             echo "MANAGER_FETCH_OK=true" >> $GITHUB_ENV
@@ -631,8 +638,10 @@ jobs:
               echo "::warning::最新通道：未找到与 $EXPECTED_BRANCH HEAD 版本 $HEAD_VERSION 一致的管理器，回退到 $MANAGER_VERSION"
             fi
             echo "ksuCommit=$HEAD_SHA" >> $GITHUB_OUTPUT
+            echo "ksuBranch=$EXPECTED_BRANCH" >> $GITHUB_OUTPUT
           else
             echo "ksuCommit=$MANAGER_HEAD_SHA" >> $GITHUB_OUTPUT
+            echo "ksuBranch=$MANAGER_BRANCH" >> $GITHUB_OUTPUT
           fi
 
           if [ "$VARIANT" == "BakaSU" ]; then
