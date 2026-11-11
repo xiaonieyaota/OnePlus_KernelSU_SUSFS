@@ -48,12 +48,12 @@ on:
           - "最新 (HEAD)"
         default: "正式 (Release)"
       use_rekernel:
-        description: '启用 Re-Kernel 驱动（默认关闭）'
+        description: '启用 Re-Kernel 驱动'
         required: false
         type: boolean
         default: false
       enable_droidspaces_ntsync:
-        description: '启用 Droidspaces 容器 & NTSync（默认关闭）'
+        description: '启用 Droidspaces 容器 & NTSync'
         required: false
         type: boolean
         default: false
@@ -288,7 +288,10 @@ jobs:
           # Inject ksu_resolved_hash into each device in the matrix
           merged_matrix=$(echo "$merged_matrix" | jq  --arg resolved_sha "$resolved_sha" 'map(.ksu_resolved_hash = $resolved_sha)')
 
-          # Droidspaces & NTSync 合并开关：默认关闭，不勾选时强制关闭两者（与自定义构建一致）
+          # Droidspaces & NTSync 合并开关（复选框，默认不勾选）。
+          # 只控制容器命名空间组（USER_NS/PID_NS/MACVLAN）与 NTSYNC；
+          # 开机必需的 DEVTMPFS / SYSVIPC / POSIX_MQUEUE / IPC_NS 在 action 里
+          # 已改为无条件写入，因此不勾选也能正常开机。
           dn=false
           [ "${{ inputs.enable_droidspaces_ntsync }}" = "true" ] && dn=true
           merged_matrix=$(echo "$merged_matrix" | jq --argjson dn "$dn" 'map(.ds = $dn | .ntsync = $dn)')
@@ -1022,9 +1025,11 @@ jobs:
           declare -A device_info
           
           # matrix.json holds this build's devices (pre-override config);
-          # ds/ntsync are global overrides, apply them here to match reality
-          ds_flag=${{ inputs.enable_droidspaces_ntsync }}
-          JSON_BUILD_DATA=$(jq -c --argjson dn "$ds_flag" 'map(.ds = $dn | .ntsync = $dn)' ./downloaded-artifacts/matrix.json)
+          # ds/ntsync are global overrides, apply them here to match reality.
+          # 开机必需项不受影响，详见 action 里 Add Droidspaces support 的分层说明。
+          dn=false
+          [ "${{ inputs.enable_droidspaces_ntsync }}" = "true" ] && dn=true
+          JSON_BUILD_DATA=$(jq -c --argjson dn "$dn" 'map(.ds = $dn | .ntsync = $dn)' ./downloaded-artifacts/matrix.json)
           
           for file in $(find downloaded-artifacts -maxdepth 1 -name "*-AnyKernel3.zip" -type f | sort); do
             if [ -f "$file" ]; then

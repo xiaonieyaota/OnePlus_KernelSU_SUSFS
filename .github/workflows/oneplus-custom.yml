@@ -205,12 +205,12 @@ on:
         type: string
         default: ''
       use_rekernel:
-        description: '启用 Re-Kernel 驱动（默认关闭）'
+        description: '启用 Re-Kernel 驱动'
         required: false
         type: boolean
         default: false
       enable_droidspaces_ntsync:
-        description: '启用 Droidspaces 容器 & NTSync（默认关闭）'
+        description: '启用 Droidspaces 容器 & NTSync'
         required: false
         type: boolean
         default: false
@@ -372,7 +372,11 @@ jobs:
 
           device=$(jq -c '.' "$config_file")
 
-          # Droidspaces & NTSync 合并开关：默认关闭，不勾选时强制关闭两者
+          # Droidspaces & NTSync 合并开关（复选框，默认不勾选）。
+          # 注意：这里覆写的是容器命名空间组（USER_NS/PID_NS/MACVLAN）与
+          # NTSYNC —— 开机必需的 DEVTMPFS / SYSVIPC / POSIX_MQUEUE / IPC_NS
+          # 在 action 里已改为无条件写入，不再受本开关影响。因此不勾选也能
+          # 正常开机，只是没有容器和 NTSync。
           dn=false
           [ "${{ inputs.enable_droidspaces_ntsync }}" = "true" ] && dn=true
           device=$(echo "$device" | jq -c --argjson dn "$dn" '.ds = $dn | .ntsync = $dn')

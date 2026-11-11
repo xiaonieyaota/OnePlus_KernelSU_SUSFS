@@ -2217,8 +2217,26 @@ runs:
         CONFIG_IP6_NF_TARGET_MASQUERADE=y
         EOF
 
+    - name: Ensure devtmpfs for first-stage mount
+      shell: bash
+      # 唯一需要无条件保证的选项。Droidspaces 步骤在 ds=false 时整体跳过，
+      # 而 DEVTMPFS 一旦缺失，ueventd 建不出 /dev/block/by-name/*，
+      # first-stage mount 失败，刷入后卡开机第一屏（无 panic、无 pstore）。
+      #
+      # 除这一项外不要在这里追加任何“顺手对齐”的配置：厂商 defconfig 片段
+      # 与 vendor 分区预编译 .ko 是按原厂布局构建的，额外改动 SYSVIPC /
+      # USER_NS / BT / TLS 等都会漂移 kABI，表现为模块 CRC 校验失败、
+      # Exec format error、声卡反复 probe defer 等功能性故障。
+      run: |
+        set -euo pipefail
+        echo "CONFIG_DEVTMPFS=y" >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+
     - name: Add Droidspaces support
       shell: bash
+      # 与上游保持一致：整个步骤（含 kABI 补丁）只在 ds=true 时执行。
+      # kABI 补丁会重排 sysv_sem / sysv_shm / mq_bytes 到 ANDROID_KABI_RESERVE
+      # 槽位，本身就会改变结构体布局，因此绝不能无条件应用 —— 原厂未打补丁
+      # 的 .ko 期望的是原始布局。
       if: ${{ env.OP_DS == 'true' }}
       run: |
         echo "::group::Add Droidspaces Support"
@@ -2254,13 +2272,14 @@ runs:
         CONFIG_DEVTMPFS=y
         CONFIG_PID_NS=y
         CONFIG_POSIX_MQUEUE=y
-        CONFIG_NETFILTER_XT_TARGET_REJECT=y
+        CONFIG_IP_NF_TARGET_REJECT=y
+        CONFIG_IP6_NF_TARGET_REJECT=y
         CONFIG_NETFILTER_XT_TARGET_LOG=y
         CONFIG_NETFILTER_XT_MATCH_RECENT=y
         CONFIG_USER_NS=y
         CONFIG_MACVLAN=y
         EOF
-        
+
         if [ "${{ env.OP_RUST_BUILD }}" = "true" ]; then
           echo "Add IPC NS missing symbols for rust binder"
           if ! grep -q 'EXPORT_SYMBOL.*put_ipc_ns' "$COMMON_KERNEL_FOLDER/ipc/namespace.c"; then
@@ -2675,22 +2694,14 @@ runs:
             ;;
         esac
 
-        # ── 修复 vendor 预编译模块 Unknown symbol（全设备、全内核版本）──────────
-        # 厂商分区预编译的 tls.ko / bluetooth.ko 依赖内核导出的 skmsg/sock_map 符号
-        # （sk_msg_*、sk_psock_*、tcp_bpf_sendmsg_redir、sk_filter_trim_cap 等）。
-        # 这些符号的导出依赖 BPF_SYSCALL + CGROUP_BPF + BPF_STREAM_PARSER
-        # （select NET_SOCK_MSG / STREAM_PARSER）以及 TLS=m / BT=m 的 select 链。
-        # 官方内核 .config 实测为 NET_SOCK_MSG=y + STREAM_PARSER=y。
-        # 此前 BPF_STREAM_PARSER 仅在 ip_set 功能开启时追加，且 patch 链可能干扰
-        # defconfig 的 select 链，导致模块加载报 Unknown symbol (err -22)。
-        # 在最终 .config 层显式对齐官方配置（olddefconfig 幂等，无害）。
-        scripts/config --file "$OUT/.config" \
-          -e BPF_SYSCALL \
-          -e CGROUP_BPF \
-          -e BPF_STREAM_PARSER \
-          -m TLS \
-          -m BT
-        echo "🔧 Aligned skmsg/sockmap symbol-export configs with stock kernel (fix tls.ko/bluetooth.ko Unknown symbol)"
+        # 不要在这里对 BT / RFKILL / TLS / BPF 做任何“对齐”。
+        # 这些功能在 6.1 及以后由厂商以预编译 .ko 形式随 system_dlkm 提供，
+        # 上游刻意保持 gki_defconfig 原值（BT=m、TLS=m）。把它们内置或关掉
+        # 都会让内核导出的符号 CRC 与厂商 .ko 不一致，实测后果：
+        #   bluetooth.ko: Exec format error
+        #   tls.ko: disagrees about version of symbol sk_psock_drop 等 28 项
+        #  BPF_STREAM_PARSER 仍由 Add IP SET & IPv6_NAT Support 步骤按上游
+        #  的版本/分支条件追加，此处不重复处理。
 
         # ── 修复 oplus_nfc 链接失败（n6x 等新内核分支）────────────────────────────
         # 部分新内核分支（如 mt6835 n6x）把 CONFIG_OPLUS_NFC 的 Kconfig default 改为 y，
@@ -2708,7 +2719,31 @@ runs:
         fi
 
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
-        
+
+        # ── 开机必需配置守卫 ─────────────────────────────────────────────────────
+        # 只有 DEVTMPFS 是真正致命的：缺失会让 ueventd 建不出设备节点，
+        # first-stage mount 失败卡第一屏。在编译前直接失败，比刷成砖再排查便宜。
+        #
+        # 不要把 SYSVIPC / POSIX_MQUEUE / IPC_NS / BT 之类列进来判死刑：
+        # 它们的取值由厂商 defconfig 片段决定，且 6.1 起 BT 受 RFKILL=m 钳制
+        # 只能是 m，判 =y 会让整个 6.x 矩阵在编译前就被误杀。其余项只打印
+        # 实际取值，供排障时对照，不改变构建结果。
+        echo "::group::Verify boot-critical configs"
+        if ! grep -qx "CONFIG_DEVTMPFS=y" "$OUT/.config"; then
+          echo "::error::CONFIG_DEVTMPFS is not =y (actual: $(grep -E '^CONFIG_DEVTMPFS=|^# CONFIG_DEVTMPFS ' "$OUT/.config" | head -1 || echo 'absent'))"
+          echo "The built Image would NOT boot. Aborting before packaging."
+          exit 1
+        fi
+        echo "✅ CONFIG_DEVTMPFS=y"
+
+        echo "Config report (ds=${OP_DS:-unset}, informational only):"
+        for opt in CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS \
+                   CONFIG_USER_NS CONFIG_PID_NS CONFIG_MACVLAN \
+                   CONFIG_BT CONFIG_RFKILL CONFIG_TLS; do
+          echo "  $(grep -E "^${opt}=|^# ${opt} " "$OUT/.config" | head -1 || echo "${opt}: absent")"
+        done
+        echo "::endgroup::"
+
         KCFLAGS="$KCFLAGS -Wno-error -pipe ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
         
