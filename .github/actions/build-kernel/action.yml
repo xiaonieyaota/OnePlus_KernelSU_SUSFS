@@ -1215,6 +1215,16 @@ runs:
           echo "✅ SukiSU 版本标识已注入 @LingLuo"
         fi
 
+        # SukiSU builtin 6076949 references the policydb type instead of the
+        # local db pointer in selinux/rules.c; fix it before compiling.
+        SU_RULES="$KSU_FOLDER/kernel/selinux/rules.c"
+        if [ -f "$SU_RULES" ] && grep -qF 'policydb->latest_granting = old_pol->latest_granting + 1;' "$SU_RULES"; then
+          sed -i 's/policydb->latest_granting = old_pol->latest_granting + 1;/db->latest_granting = old_pol->latest_granting + 1;/' "$SU_RULES"
+          grep -qF 'db->latest_granting = old_pol->latest_granting + 1;' "$SU_RULES" \
+            || { echo "::error::SukiSU rules.c policydb fix failed"; exit 1; }
+          echo "🔧 compat: corrected policydb typo in SukiSU rules.c"
+        fi
+
         # ── Kernel-tree API compatibility for SukiSU (auto-detected, all kernel versions) ──
         # Newer BSP kernel trees (sm8845/sm8850/mt6789/mt6993, android16-6.12.38+) diverged
         # from what the builtin branch expects and fail to compile without these fixes:
