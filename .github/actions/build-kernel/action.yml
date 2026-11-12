@@ -1215,14 +1215,22 @@ runs:
           echo "✅ SukiSU 版本标识已注入 @LingLuo"
         fi
 
-        # SukiSU builtin 6076949 references the policydb type instead of the
-        # local db pointer in selinux/rules.c; fix it before compiling.
+        # SukiSU builtin 6076949 has two typos in selinux/rules.c:
+        # policydb is a type (latest_granting belongs to pol) and seqno0
+        # should be the seqno parameter.
         SU_RULES="$KSU_FOLDER/kernel/selinux/rules.c"
-        if [ -f "$SU_RULES" ] && grep -qF 'policydb->latest_granting = old_pol->latest_granting + 1;' "$SU_RULES"; then
-          sed -i 's/policydb->latest_granting = old_pol->latest_granting + 1;/db->latest_granting = old_pol->latest_granting + 1;/' "$SU_RULES"
-          grep -qF 'db->latest_granting = old_pol->latest_granting + 1;' "$SU_RULES" \
-            || { echo "::error::SukiSU rules.c policydb fix failed"; exit 1; }
-          echo "🔧 compat: corrected policydb typo in SukiSU rules.c"
+        if [ -f "$SU_RULES" ]; then
+          if grep -qF 'policydb->latest_granting = old_pol->latest_granting + 1;' "$SU_RULES"; then
+            sed -i 's/policydb->latest_granting = old_pol->latest_granting + 1;/pol->latest_granting = old_pol->latest_granting + 1;/' "$SU_RULES"
+            echo "🔧 compat: corrected policydb typo in SukiSU rules.c"
+          elif grep -qF 'db->latest_granting = old_pol->latest_granting + 1;' "$SU_RULES"; then
+            sed -i 's/db->latest_granting = old_pol->latest_granting + 1;/pol->latest_granting = old_pol->latest_granting + 1;/' "$SU_RULES"
+            echo "🔧 compat: repaired db latest_granting reference in SukiSU rules.c"
+          fi
+          if grep -qF 'selinux_status_update_policyload(seqno0);' "$SU_RULES"; then
+            sed -i 's/selinux_status_update_policyload(seqno0);/selinux_status_update_policyload(seqno);/' "$SU_RULES"
+            echo "🔧 compat: corrected seqno0 typo in SukiSU rules.c"
+          fi
         fi
 
         # ── Kernel-tree API compatibility for SukiSU (auto-detected, all kernel versions) ──
