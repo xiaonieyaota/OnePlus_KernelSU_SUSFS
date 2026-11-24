@@ -62,6 +62,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable_sdp900ma:
+        description: '启用 SDP USB 数据口 900 mA 充电'
+        required: false
+        type: boolean
+        default: false
       optimize_level:
         description: '编译器优化级别'
         required: true
@@ -326,6 +331,11 @@ jobs:
           [ "${{ inputs.enable_droidspaces_ntsync }}" = "true" ] && dn=true
           merged_matrix=$(echo "$merged_matrix" | jq --argjson dn "$dn" 'map(.ds = $dn | .ntsync = $dn)')
           echo "Droidspaces/NTSync override: $dn"
+
+          sdp900ma=false
+          [ "${{ inputs.enable_sdp900ma }}" = "true" ] && sdp900ma=true
+          merged_matrix=$(echo "$merged_matrix" | jq --argjson sdp900ma "$sdp900ma" 'map(.sdp900ma = $sdp900ma)')
+          echo "Faster SDP Charging override: $sdp900ma"
 
           # SUSFS hash fetch
           GITLAB_PROJECT_PATH="simonpunk/susfs4ksu"
@@ -1063,11 +1073,14 @@ jobs:
           declare -A device_info
           
           # matrix.json holds this build's devices (pre-override config);
-          # ds/ntsync are global overrides, apply them here to match reality.
+          # ds/ntsync/sdp900ma are global overrides, apply them here to match reality.
           # 开机必需项不受影响，详见 action 里 Add Droidspaces support 的分层说明。
           dn=false
           [ "${{ inputs.enable_droidspaces_ntsync }}" = "true" ] && dn=true
-          JSON_BUILD_DATA=$(jq -c --argjson dn "$dn" 'map(.ds = $dn | .ntsync = $dn)' ./downloaded-artifacts/matrix.json)
+          sdp900ma=false
+          [ "${{ inputs.enable_sdp900ma }}" = "true" ] && sdp900ma=true
+          JSON_BUILD_DATA=$(jq -c --argjson dn "$dn" --argjson sdp900ma "$sdp900ma" \
+            'map(.ds = $dn | .ntsync = $dn | .sdp900ma = $sdp900ma)' ./downloaded-artifacts/matrix.json)
           
           for file in $(find downloaded-artifacts -maxdepth 1 -name "*-AnyKernel3.zip" -type f | sort); do
             if [ -f "$file" ]; then
@@ -1184,6 +1197,7 @@ jobs:
           jq -e 'all(.[]; (.unicode  // false) == true)' <<< "$JSON_BUILD_DATA" >/dev/null 2>&1 && CF+=("🔧 Unicode Fix")
           jq -e 'all(.[]; (.ds       // false) == true)' <<< "$JSON_BUILD_DATA" >/dev/null 2>&1 && CF+=("💻 Droidspaces")
           jq -e 'all(.[]; (.ntsync   // false) == true)' <<< "$JSON_BUILD_DATA" >/dev/null 2>&1 && CF+=("🔃 NTSync")
+          jq -e 'all(.[]; (.sdp900ma // false) == true)' <<< "$JSON_BUILD_DATA" >/dev/null 2>&1 && CF+=("🔌 Faster SDP Charging")
           if [ ${#CF[@]} -gt 0 ]; then
             COMMON_FEATURES=""
             count=0

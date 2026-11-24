@@ -221,6 +221,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable_sdp900ma:
+        description: '启用 SDP USB 数据口 900 mA 充电'
+        required: false
+        type: boolean
+        default: false
       optimize_level:
         description: '编译器优化级别'
         required: true
@@ -388,6 +393,11 @@ jobs:
           [ "${{ inputs.enable_droidspaces_ntsync }}" = "true" ] && dn=true
           device=$(echo "$device" | jq -c --argjson dn "$dn" '.ds = $dn | .ntsync = $dn')
           echo "Droidspaces/NTSync override: $dn"
+
+          sdp900ma=false
+          [ "${{ inputs.enable_sdp900ma }}" = "true" ] && sdp900ma=true
+          device=$(echo "$device" | jq -c --argjson sdp900ma "$sdp900ma" '.sdp900ma = $sdp900ma')
+          echo "Faster SDP Charging override: $sdp900ma"
 
           # KernelSU 变体（固定默认分支：SukiSU-Nova→builtin, BakaSU→main, FinaSU→master）
           ksu_variant='${{ inputs.ksu_variant }}'
