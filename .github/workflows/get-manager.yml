@@ -178,10 +178,10 @@ jobs:
           } >> "$GITHUB_ENV"
 
           if [ "${{ inputs.ksu_variant }}" == "SukiSU-Nova" ]; then
-            # SukiSU-Nova 管理器已迁至 CNB 结果仓库（cnb.cool/shirkneko/sukisu-result）。
+            # SukiSU-Nova 管理器已从旧 CNB 结果仓库迁至发布仓库。
             # web JSON 接口使用专用 Accept 头，可匿名分页读取 Release。
             # 正式通道取最新正式版（is_prerelease=false），最新通道取滚动 manager-ci。
-            CNB_WEB="https://cnb.cool/shirkneko/sukisu-result/-/releases"
+            CNB_WEB="https://cnb.cool/shirkneko/sukisu-release/-/releases"
             REPO_URL="https://git.zako.shirkneko.top:20004/shirkneko/SukiSU.git"
             if [ "$CHANNEL_KIND" = "latest" ]; then
               CNB_PICK_CI=1
