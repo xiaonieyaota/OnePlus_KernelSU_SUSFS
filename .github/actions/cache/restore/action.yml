@@ -23,6 +23,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  cache_repo:
+    description: 'External repo (owner/name) that stores the cache release. Defaults to the shared cache repo so forks reuse it.'
+    required: false
+    type: string
+    default: 'LingLuo17/OnePlus_General_Cache'
 
 runs:
   using: 'composite'
@@ -30,7 +35,7 @@ runs:
     - name: Detect and Download Cache
       shell: bash
       env:
-        TARGET_REPO: "${{ github.repository }}"
+        TARGET_REPO: ${{ inputs.cache_repo }}
         CACHE_PATH: "${{ inputs.cache_path }}"
       run: |
         # Detect and Download Cache

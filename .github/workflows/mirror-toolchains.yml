@@ -13,31 +13,20 @@ jobs:
   prepare-release:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
       - name: Ensure Single Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CACHE_REPO_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          # Check if the release already exists
-          TARGET_REPO="${{ github.repository }}"
+          # Check if the release already exists in the external cache repo
+          TARGET_REPO="${{ vars.CACHE_REPO || 'LingLuo17/OnePlus_General_Cache' }}"
           TAG_NAME="toolchain-cache"
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Tag not found. Creating backdated tag and release..."
-            
-            GIT_COMMITTER_DATE="2015-01-01T12:00:00" git tag -a "$TAG_NAME" -m "Internal Toolchains Cache"
-            git push origin "$TAG_NAME"
+
+          if [ "$(gh api "repos/$TARGET_REPO" --jq '.permissions.push' 2>/dev/null)" != "true" ]; then
+            echo "::error::No write access to $TARGET_REPO. Set the CACHE_REPO_TOKEN secret (PAT with Contents: Read and write on $TARGET_REPO) to mirror toolchains into it."
+            exit 1
           fi
 
           if ! gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
-
             echo "Release not found. Creating..."
             gh release create "$TAG_NAME" --title "Toolchains Mirror Cache" --notes "Deduplicated Toolchains for Kernel Build" --repo "$TARGET_REPO"
           fi
@@ -179,11 +168,11 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.generate-mirror-matrix.outputs.matrix) }}
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.CACHE_REPO_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Sync & Upload
         run: |
-          TARGET_REPO="${{ github.repository }}"
+          TARGET_REPO="${{ vars.CACHE_REPO || 'LingLuo17/OnePlus_General_Cache' }}"
           UPSTREAM_REPO="WildKernels/OnePlus_KernelSU_SUSFS"
           REV="${{ matrix.rev }}"
           FILENAME="${{ matrix.cache_file }}"
@@ -193,8 +182,9 @@ jobs:
           echo "🔍 Checking if $FILENAME exists in mirror..."
 
           # SUSFS 分支归档是移动目标（GitLab 分支头持续前进），过时缓存会让构建
-          # 拿到旧补丁而缺少最新兼容性修复。因此 susfs 不走本地/上游缓存快速路径，
-          # 每次都从源站刷新；单个归档仅数 MB，代价可忽略。
+          # 拿到旧补丁而缺少最新兼容性修复。因此 susfs 每次都先尝试从源站刷新；
+          # 但 GitLab 对并发归档请求限流（429），刷新失败时回退到已有缓存而不是
+          # 让整个 workflow 失败（fail-fast 会连带跳过所有 kernel 构建）。
           if [ "${{ matrix.type_label }}" != "susfs" ]; then
             STATUS=$(curl -IsL -o /dev/null -w "%{http_code}" "$BASE_URL/$FILENAME")
             PART_STATUS=$(curl -IsL -o /dev/null -w "%{http_code}" "$BASE_URL/${FILENAME}.partaa")
@@ -203,11 +193,29 @@ jobs:
             UP_STATUS=$(curl -IsL -o /dev/null -w "%{http_code}" "$UPSTREAM_URL/$FILENAME")
             UP_PART_STATUS=$(curl -IsL -o /dev/null -w "%{http_code}" "$UPSTREAM_URL/${FILENAME}.partaa")
           else
-            STATUS=0; PART_STATUS=0; UP_STATUS=0; UP_PART_STATUS=0
-            echo "🔄 SUSFS archive is a moving branch: refreshing from origin (cache fast paths skipped)..."
+            STATUS=$(curl -IsL -o /dev/null -w "%{http_code}" "$BASE_URL/$FILENAME")
+            PART_STATUS=0; UP_STATUS=0; UP_PART_STATUS=0
+            # 5 个 susfs 分支并发请求 GitLab 会触发 429，错开最多 2 分钟
+            STAGGER=$((RANDOM % 120))
+            echo "🔄 SUSFS archive is a moving branch: refreshing from origin (staggered by ${STAGGER}s)..."
+            sleep "$STAGGER"
           fi
 
-          if [ "$STATUS" -eq 200 ] || [ "$PART_STATUS" -eq 200 ]; then
+          if [ "${{ matrix.type_label }}" = "susfs" ]; then
+            echo "📥 Refreshing susfs from source..."
+            if aria2c -x8 -s8 -k1M -j1 --file-allocation=none --console-log-level=error --summary-interval=0 --retry-wait=30 --max-tries=6 -o "$FILENAME" "${{ matrix.url }}"; then
+              echo "📤 Uploading refreshed susfs archive..."
+              gh release upload "toolchain-cache" "$FILENAME" --clobber --repo "$TARGET_REPO"
+              rm -f "$FILENAME"
+              echo "✅ Refreshed from origin."
+            elif [ "$STATUS" -eq 200 ]; then
+              echo "::warning::GitLab rate-limited the susfs refresh for $FILENAME; keeping the existing cached copy."
+              echo "✅ Using existing cached copy."
+            else
+              echo "::error::Failed to fetch $FILENAME from origin and no cached copy exists."
+              exit 1
+            fi
+          elif [ "$STATUS" -eq 200 ] || [ "$PART_STATUS" -eq 200 ]; then
             echo "✅ ${{ matrix.type_label }} revision ${{ matrix.rev }} already cached."
           elif [ "$UP_STATUS" -eq 200 ] || [ "$UP_PART_STATUS" -eq 200 ]; then
             echo "⚡ Found in upstream ${UPSTREAM_REPO} cache — copying instead of re-downloading from origin..."

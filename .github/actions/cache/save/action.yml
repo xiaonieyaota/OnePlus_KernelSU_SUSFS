@@ -40,6 +40,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  cache_repo:
+    description: 'External repo (owner/name) that stores the cache release. Defaults to the shared cache repo so forks reuse it.'
+    required: false
+    type: string
+    default: 'LingLuo17/OnePlus_General_Cache'
 
 runs:
   using: 'composite'
@@ -48,10 +53,18 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
-        TARGET_REPO: "${{ github.repository }}"
+        TARGET_REPO: ${{ inputs.cache_repo }}
       run: |
         # Archive, Split, and Upload Cache
         if [ "${{ inputs.debug }}" = "true" ]; then set -x; fi
+
+        # The cache release lives in an external repo, so writes need a PAT that
+        # can reach it (GITHUB_TOKEN is scoped to the current repo only). Without
+        # one we still restore from the shared cache but skip saving.
+        if [ "$(gh api "repos/$TARGET_REPO" --jq '.permissions.push' 2>/dev/null)" != "true" ]; then
+          echo "::warning title=Cache save skipped::No write access to $TARGET_REPO. Set the CACHE_REPO_TOKEN secret (PAT with Contents: Read and write on $TARGET_REPO) to enable saving."
+          exit 0
+        fi
 
         # Spread concurrent uploads from large matrices
         if [ "${{ inputs.stagger }}" = "true" ]; then
@@ -77,24 +90,13 @@ runs:
         
         echo "::group:: Checking Release State"
         
-        git fetch --tags --force
-        
-        if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-          echo "Tag '$TAG_NAME' not found. Creating backdated release..."
-          GIT_COMMITTER_DATE="2015-01-01T12:00:00" git tag -a "$TAG_NAME" -m "General Cache Storage"
-          if git push origin "$TAG_NAME" --force; then
-            gh release create "$TAG_NAME" --title "General Cache" --notes "Automated storage for build assets" --repo "$TARGET_REPO" || true
-          else
-            echo "Push failed, tag might have been created by a parallel job. Continuing..."
-          fi
+        if ! gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+          echo "Release '$TAG_NAME' not found in $TARGET_REPO. Creating..."
+          gh release create "$TAG_NAME" --title "General Cache" --notes "Automated storage for build assets" --repo "$TARGET_REPO"
         else
           echo "Release '$TAG_NAME' already exists. Ready for upload."
         fi
         echo "::endgroup::"
-        
-        if ! gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
-          gh release create "$TAG_NAME" --title "General Cache" --notes "Automated storage for build assets" --repo "$TARGET_REPO" || gh release view "$TAG_NAME" --repo "$TARGET_REPO" >/dev/null
-        fi
         
         echo "::group:: Archiving Path"
         echo "Target: ${{ inputs.cache_path }}"

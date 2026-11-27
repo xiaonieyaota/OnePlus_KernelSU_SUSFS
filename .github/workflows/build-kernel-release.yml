@@ -824,7 +824,10 @@ jobs:
           build_timestamp: ${{ inputs.build_timestamp }}
           clean: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # 缓存存放在外部仓库（fork 共用）；仓库级 Variable CACHE_REPO 可覆盖
+          cache_repo: ${{ vars.CACHE_REPO || 'LingLuo17/OnePlus_General_Cache' }}
+          # 写入外部缓存仓库需要 PAT（Secret CACHE_REPO_TOKEN）；未配置时只读不写
+          github_token: ${{ secrets.CACHE_REPO_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: 📊 Build statistics
         id: build-stat

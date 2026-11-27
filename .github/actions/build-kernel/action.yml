@@ -84,6 +84,11 @@ inputs:
     required: false
     type: boolean
     default: true
+  cache_repo:
+    description: 'External repo (owner/name) that stores the cache releases. Defaults to the shared cache repo so forks reuse it.'
+    required: false
+    type: string
+    default: 'LingLuo17/OnePlus_General_Cache'
   github_token:
     description: 'GitHub Token'
     required: true
@@ -388,6 +393,7 @@ runs:
       uses: ./action-source/.github/actions/kernel-source-sync
       with:
         source_location: ${{ env.CONFIG }}
+        cache_repo: ${{ inputs.cache_repo }}
         debug: ${{ inputs.debug }}
 
     - name: Set Dir Paths
@@ -905,6 +911,7 @@ runs:
         cache_path: ${{ env.CCACHE_DIR }}
         cache_key: ${{ inputs.ksu_type }}-v3-${{ env.MODEL_FLAT }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "ccache-cache"
+        cache_repo: ${{ inputs.cache_repo }}
         debug: ${{ inputs.debug }}
         restore_keys: |
           ${{ inputs.ksu_type }}-v3-${{ env.MODEL_FLAT }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
@@ -1115,10 +1122,10 @@ runs:
               exit 1
             fi
           else
-          # 优先从本仓库 toolchain-cache 下载 SUSFS 归档（mirror 预缓存），
+          # 优先从外部缓存仓库 toolchain-cache 下载 SUSFS 归档（mirror 预缓存），
           # 避免全部矩阵 job 并发请求 GitLab 归档接口被限流；缓存缺失才回退 GitLab
           # 下载链：aria2c 多连接（快）→ curl 单连接（稳，规避 CDN 对多连接的间歇拒绝）→ GitLab
-          SUSFS_CACHE_URL="https://github.com/${{ github.repository }}/releases/download/toolchain-cache/susfs-${SUSFS_BRANCH}.tar.gz"
+          SUSFS_CACHE_URL="https://github.com/${{ inputs.cache_repo }}/releases/download/toolchain-cache/susfs-${SUSFS_BRANCH}.tar.gz"
           SUSFS_ARCHIVE="susfs_${SUSFS_BRANCH}.tar.gz"
           CACHE_OK=false
           for ATTEMPT in 1 2 3; do
@@ -3484,6 +3491,7 @@ runs:
         cache_path: ${{ env.CCACHE_DIR }}
         cache_key: ${{ inputs.ksu_type }}-v3-${{ env.MODEL_FLAT }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "ccache-cache"
+        cache_repo: ${{ inputs.cache_repo }}
         stagger: ${{ inputs.cache_stagger }}
         debug: ${{ inputs.debug }}
         github_token: ${{ inputs.github_token }}
