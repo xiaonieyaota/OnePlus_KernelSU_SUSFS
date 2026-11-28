@@ -18,7 +18,7 @@
 # 移植均为内容检测：已包含则跳过，重复执行幂等；上游 builtin 自行同步
 # UAPI 后同样自动跳过。
 #
-# 用法: sync_uapi.sh [KernelSU 目录]（调用方工作目录需为 $KERNEL_ROOT，
+# 用法: sync.sh [KernelSU 目录]（调用方工作目录需为 $KERNEL_ROOT，
 #       需可访问官方仓库 raw.githubusercontent.com）
 
 set -eo pipefail

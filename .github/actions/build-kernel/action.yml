@@ -1204,10 +1204,23 @@ runs:
         curl --fail --location --proto '=https' -LSs "https://git.zako.shirkneko.top:20004/shirkneko/SukiSU/raw/main/kernel/setup.sh" | bash -s "$KSU_INPUT"
         git submodule update --init --recursive || true
 
-        # builtin 分支的 kernel/Makefile 仍是迁移前的模板（旧仓库名、GitHub API、
-        # -4001 偏移），改写为 zako 新仓库与 main/Kbuild 的新版公式
-        # （KSU_VERSION = 30000 + 提交数 + 996），否则内核版本对不上管理器。
+        # builtin 分支的 kernel/Makefile 原本是迁移前的模板（旧仓库名、GitHub API、
+        # -4001 偏移），需改写为 zako 新仓库与新版公式（KSU_VERSION = 30000 + 提交数 + 996）。
+        # 上游后来把版本逻辑拆到了 kernel/kbuild-config/version.mk，且默认值已是目标值，
+        # 此时无需改写，只校验；仅旧布局（变量仍在 Makefile）才执行改写。
         KSU_MK="KernelSU/kernel/Makefile"
+        KSU_VER_MK="KernelSU/kernel/kbuild-config/version.mk"
+        if [ -f "$KSU_VER_MK" ]; then
+          # 新版布局：version.mk 已指向 zako 仓库并使用 +996 偏移，直接校验。
+          if ! grep -qE '^REPO_OWNER[[:space:]]*:= shirkneko$' "$KSU_VER_MK" \
+             || ! grep -qE '^REPO_NAME[[:space:]]*:= SukiSU$' "$KSU_VER_MK" \
+             || ! grep -qE '^VERSION_OFFSET[[:space:]]*:= 996$' "$KSU_VER_MK" \
+             || ! grep -qE '^RELEASE_API_BASE[[:space:]]*:= https://git\.zako\.shirkneko\.top:20004/' "$KSU_VER_MK"; then
+            echo "::error::SukiSU version.mk 的版本来源与预期不符（上游可能再次调整），需重新适配"
+            exit 1
+          fi
+          echo "SukiSU 新版布局：version.mk 已指向 zako 仓库并使用 +996 偏移，跳过改写"
+        else
         python3 - "$KSU_MK" <<'PY'
         from pathlib import Path
         import sys
@@ -1252,6 +1265,7 @@ runs:
         path.write_text("".join(out), encoding="utf-8")
         print("Patched SukiSU builtin kernel/Makefile (zako repo, +996 offset)")
         PY
+        fi
         if grep -qE 'SukiSU-Nova|api\.github\.com' "$KSU_MK"; then
           echo "::error::SukiSU builtin kernel/Makefile 仍引用旧仓库，版本来源改写失败"
           exit 1
@@ -1267,12 +1281,23 @@ runs:
             echo "::error::官方构建提交 $KSU_COMMIT 不在 KernelSU 仓库中，无法对齐版本来源"
             exit 1
           fi
-          if ! sed -i -E "s|^(REPO_BRANCH[[:space:]]*[:?+]?=)[[:space:]]*main[[:space:]]*\$|\1 $KSU_COMMIT|" KernelSU/kernel/Makefile; then
-            echo "::error::改写 KernelSU/kernel/Makefile 的 REPO_BRANCH 失败，无法对齐管理器版本"
+          # REPO_BRANCH 所在文件随上游布局而定：新版在 kbuild-config/version.mk，
+          # 旧版在 kernel/Makefile。两处都尝试，以实际命中的为准。
+          KSU_BRANCH_FILE=""
+          for KSU_CAND in "$KSU_VER_MK" "$KSU_MK"; do
+            [ -f "$KSU_CAND" ] || continue
+            grep -qE '^REPO_BRANCH[[:space:]]*[:?+]?=' "$KSU_CAND" && { KSU_BRANCH_FILE="$KSU_CAND"; break; }
+          done
+          if [ -z "$KSU_BRANCH_FILE" ]; then
+            echo "::error::未找到 REPO_BRANCH 定义（上游 Makefile/version.mk 结构可能已变化），无法对齐管理器版本"
             exit 1
           fi
-          if ! grep -qE "^REPO_BRANCH[[:space:]]*[:?+]?=[[:space:]]*$KSU_COMMIT[[:space:]]*\$" KernelSU/kernel/Makefile; then
-            echo "::error::未能在 KernelSU/kernel/Makefile 中对齐 REPO_BRANCH（上游 Makefile 结构可能已变化），无法对齐管理器版本"
+          if ! sed -i -E "s|^(REPO_BRANCH[[:space:]]*[:?+]?=)[[:space:]]*main[[:space:]]*\$|\1 $KSU_COMMIT|" "$KSU_BRANCH_FILE"; then
+            echo "::error::改写 $KSU_BRANCH_FILE 的 REPO_BRANCH 失败，无法对齐管理器版本"
+            exit 1
+          fi
+          if ! grep -qE "^REPO_BRANCH[[:space:]]*[:?+]?=[[:space:]]*$KSU_COMMIT[[:space:]]*\$" "$KSU_BRANCH_FILE"; then
+            echo "::error::未能在 $KSU_BRANCH_FILE 中对齐 REPO_BRANCH（上游结构可能已变化），无法对齐管理器版本"
             exit 1
           fi
           echo "SukiSU-Nova 内核侧版本来源已对齐官方上传构建提交 $KSU_COMMIT (KSU 版本 $((30000 + $(git -C KernelSU rev-list --count "$KSU_COMMIT") + 996)))"
@@ -1284,56 +1309,23 @@ runs:
           echo "✅ SukiSU-Nova 版本标识已注入 @LingLuo"
         fi
 
-        # ── Kernel-tree API compatibility for SukiSU-Nova (auto-detected, all kernel versions) ──
-        # Newer BSP kernel trees (sm8845/sm8850/mt6789/mt6993, android16-6.12.38+) diverged
-        # from what the builtin branch expects and fail to compile without these fixes:
-        # 1) security_add_hooks() takes a `const struct lsm_id *lsmid` instead of a
-        #    `const char *`; the struct lsm_id string field is named `name` or `lsm`
-        #    depending on the tree, so the field is detected at build time.
-        # 2) KERNEL_SU_UAPI_VERSION on the builtin branch can lag the manager built
-        #    from main; the dynamic sync below closes the gap whenever it reopens.
-        # （2026-10-24 清理：pkg_observer track_throne 标志 / selinux 跳板 /
-        #   manager ioctl 三项一次性兼容已随 SukiSU-Nova builtin ce75122b
-        #   （2026-10-21 同步官方 KernelSU）上游修复而移除：pkg_observer 回归
-        #   track_throne(false)，selinux_hide 改为静态函数指针，动态管理器
-        #   ioctl 重构。KSU_KERNEL_DIR 兼容已恢复（见下方第 3 项）：builtin
-        #   的 ifeq filter 只拦绝对路径，拦不住 6.12 OP 树相对的
-        #   "../drivers/kernelsu"，上游并未真正修复。）
+        # ── Kernel-tree API compatibility for SukiSU-Nova ──
+        # （2026-11-28 清理：以下三项一次性兼容已随 SukiSU builtin 28d8c0f8 /
+        #   38f7005d 上游重构而移除：
+        #   - LSM 槽位链式钩挂（fix_lsm_hook.py）：上游已无 security_add_hooks，
+        #     hook/lsm_hook.c 拆为 hook/lsm/{static,list,ultralegacy}.c，>= 6.8 的
+        #     static.c 直接改写既有 static-call 槽位，不再注册第 4 个 LSM；
+        #   - security_add_hooks 的 const struct lsm_id * 兼容：该调用已不存在；
+        #   - KSU_KERNEL_DIR 通配符保护：上游改用 MDIR := $(realpath ...)，
+        #     KSU_KERNEL_DIR 变量已移除，6.12 相对 $(src) 问题从根上消除。）
 
-        LSM_HOOKS_H="$COMMON_KERNEL_FOLDER/include/linux/lsm_hooks.h"
-        SU_LSM="$KSU_FOLDER/kernel/hook/lsm_hook.c"
-        if [ -f "$LSM_HOOKS_H" ] && [ -f "$SU_LSM" ]; then
-          if grep -q "const struct lsm_id \*lsmid" "$LSM_HOOKS_H" && grep -q 'security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu")' "$SU_LSM"; then
-            LSM_FIELD="$(sed -n '/struct lsm_id {/,/};/p' "$LSM_HOOKS_H" | grep -oE 'const char[[:space:]]+\*[a-z_]+' | head -n1 | sed -E 's/const char[[:space:]]+\*//')"
-            LSM_FIELD="${LSM_FIELD:-name}"
-            sed -i 's|security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");|{ static const struct lsm_id ksu_lsm_id = { .'"$LSM_FIELD"' = "ksu", .id = 0 }; security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), \&ksu_lsm_id); }|' "$SU_LSM"
-            echo "🔧 compat: security_add_hooks migrated to the const struct lsm_id * API (field: $LSM_FIELD)"
-          fi
-        fi
-
-        # 3) Dynamic UAPI sync (scripts/susfs_compat/sync_uapi.sh): 对齐官方
-        #    main 分支管理器的 UAPI。builtin 现为 6（与 main 持平），本步当前
-        #    为无操作；脚本内容自适应且幂等，main 未来升 7/8 而 builtin 滞后时
-        #    自动补齐缺失常量/标志/ioctl 并抬升 KERNEL_SU_UAPI_VERSION（含
-        #    infra/symbol_resolver 内核侧接线）。
-        if [ -f "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" ]; then
-          bash "$GITHUB_WORKSPACE/scripts/susfs_compat/sync_uapi.sh" "$KSU_FOLDER"
-        fi
-
-        # 4) 6.12 GKI 树（canoe/mt6789/mt6993 等）以 O=out 构建：make -C out 时
-        #    kbuild 给 drivers/kernelsu 的 $(src) 是 "../drivers/kernelsu"（相对），
-        #    builtin Makefile 的 "KSU_KERNEL_DIR := $(srctree)/$(src)"（其 ifeq
-        #    filter 只拦绝对路径）再拼一层相对 $(srctree) 得到
-        #    "../../drivers/kernelsu"，preinit runner 规则在 make 规则求值阶段即报
-        #      No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'
-        #    改为 $(wildcard) 自校验拼接：拼出的路径看得到 runner.c 才用它，
-        #    否则退回 $(src)；≤6.6 树取值与原来一致（FinaSU 同款修法）。
-        SU_KB="$KSU_FOLDER/kernel/Makefile"
-        if [ -f "$SU_KB" ] && grep -qF 'KSU_KERNEL_DIR := $(srctree)/$(src)' "$SU_KB"; then
-          sed -i 's|^KSU_KERNEL_DIR := \$(srctree)/\$(src)$|KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))|' "$SU_KB"
-          grep -qF 'KSU_KERNEL_DIR := $(if $(wildcard $(srctree)/$(src)/preinit/runner/runner.c),$(srctree)/$(src),$(src))' "$SU_KB" \
-            || { echo "::error::SukiSU-Nova Makefile KSU_KERNEL_DIR 重写失败（上游结构可能已变化）"; exit 1; }
-          echo "🔧 compat: SukiSU-Nova KSU_KERNEL_DIR wildcard-guarded against 6.12 relative \$(src)"
+        # Dynamic UAPI sync (scripts/sukisu_uapi_sync/sync.sh): 对齐官方
+        # main 分支管理器的 UAPI。builtin 现为 6（与 main 持平），本步当前
+        # 为无操作；脚本内容自适应且幂等，main 未来升 7/8 而 builtin 滞后时
+        # 自动补齐缺失常量/标志/ioctl 并抬升 KERNEL_SU_UAPI_VERSION（含
+        # infra/symbol_resolver 内核侧接线）。
+        if [ -f "$GITHUB_WORKSPACE/scripts/sukisu_uapi_sync/sync.sh" ]; then
+          bash "$GITHUB_WORKSPACE/scripts/sukisu_uapi_sync/sync.sh" "$KSU_FOLDER"
         fi
 
         cd KernelSU/kernel
@@ -1767,44 +1759,6 @@ runs:
         bash "$GITHUB_WORKSPACE/scripts/susfs_compat/apply_kernel_susfs_patch.sh" \
           "$COMMON_KERNEL_FOLDER" \
           "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
-
-        # SUSFS 的隐藏 SELinux access 路径使用自己的 susfs_security_compute_av_user
-        # （见 handle_sel_write_access -> susfs_sel_write_access），其中 avd_init()
-        # 会把 avd->seqno 设为 policy->latest_granting，向 /selinux/access 暴露
-        # 真实策略代数，构成 SEL 检测点。在 avd_init() 之后固定 seqno=1（原生
-        # Android 只加载一次策略，读数恒为 1），保持访问查询的序号稳定。
-        # 只改 SUSFS 的隐藏查询响应，不动内核本身的 avd_init()/真实策略计算。
-        for AV_FILE in security/selinux/ss/services.c security/selinux/hooks.c; do
-          [ -f "$AV_FILE" ] || continue
-          if grep -q 'void susfs_security_compute_av_user' "$AV_FILE"; then
-            python3 - "$AV_FILE" <<'PYEOF'
-        import re
-        import sys
-
-        path = sys.argv[1]
-        with open(path, encoding="utf-8", errors="surrogateescape") as f:
-            text = f.read()
-
-        match = re.search(r"void susfs_security_compute_av_user\(", text)
-        if not match:
-            raise SystemExit("SUSFS AV helper not found")
-        end = text.find("\n}\n", match.start())
-        if end < 0:
-            raise SystemExit("SUSFS AV helper is incomplete")
-        body = text[match.start():end]
-        if "avd->seqno = 1;" in body:
-            raise SystemExit(0)
-        needle = "\tavd_init(policy, avd);"
-        if body.count(needle) != 1:
-            raise SystemExit("unexpected SUSFS AV initialization")
-        body = body.replace(needle, needle + "\n\tavd->seqno = 1;", 1)
-        text = text[:match.start()] + body + text[end:]
-        with open(path, "w", encoding="utf-8", errors="surrogateescape") as f:
-            f.write(text)
-        PYEOF
-            echo "$AV_FILE: SUSFS access results now report SELinux sequence 1"
-          fi
-        done
 
         # SUSFS's OPEN_REDIRECT code unconditionally calls VMA_PAD_START(), which
         # only exists on GKI branches that carry Google's page-size-migration

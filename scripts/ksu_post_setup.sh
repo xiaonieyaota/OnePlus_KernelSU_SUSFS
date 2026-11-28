@@ -25,12 +25,15 @@ apply_bakasu() {
 }
 
 apply_sukisu() {
+  # @$(call git_branch) 占位符的位置随上游布局而定：
+  # 新版在 kernel/kbuild-config/version.mk，旧版在 Kbuild / Makefile。
+  # 以实际包含占位符的文件为准，避免新版布局下静默跳过。
+  local pat=$(echo "${PATTERNS[sukisu_branch]}" | base64 -d)
   local kbuild=""
-  for f in "$KSU_DIR/kernel/Kbuild" "$KSU_DIR/kernel/Makefile"; do
-    if [ -f "$f" ]; then kbuild="$f"; break; fi
+  for f in "$KSU_DIR/kernel/kbuild-config/version.mk" "$KSU_DIR/kernel/Kbuild" "$KSU_DIR/kernel/Makefile"; do
+    if [ -f "$f" ] && grep -qF "$pat" "$f"; then kbuild="$f"; break; fi
   done
   if [ -n "$kbuild" ]; then
-    local pat=$(echo "${PATTERNS[sukisu_branch]}" | base64 -d)
     sed -i "s/${pat}/@${BRAND}/" "$kbuild"
     local rel="${kbuild#${KSU_DIR}/}"
     git -C "$KSU_DIR" update-index --skip-worktree "$rel" 2>/dev/null || true
