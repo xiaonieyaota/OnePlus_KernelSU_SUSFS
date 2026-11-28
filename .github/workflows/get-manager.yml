@@ -178,68 +178,57 @@ jobs:
           } >> "$GITHUB_ENV"
 
           if [ "${{ inputs.ksu_variant }}" == "SukiSU-Nova" ]; then
-            # SukiSU-Nova 管理器已从旧 CNB 结果仓库迁至发布仓库。
-            # web JSON 接口使用专用 Accept 头，可匿名分页读取 Release。
-            # 正式通道取最新正式版，缺失时回退到 manager-ci 测试版；
+            # SukiSU-Nova 管理器仓库已迁至 cnb.cool/sukisu-nova/Release。
+            # 新仓库不再使用 Release，APK 直接提交在 manager-ci 分支，
+            # 由 manifest.json 描述（assets[].browser_download_url）。
+            # 该分支只有预发布版，没有独立正式版：正式通道取不到正式版时
+            # 回退到 manager-ci 测试版（保留原有回退告警）；
             # 最新通道直接取滚动 manager-ci。
-            CNB_WEB="https://cnb.cool/shirkneko/sukisu-release/-/releases"
+            CNB_WEB="https://cnb.cool/sukisu-nova/Release/-/git/raw/manager-ci/manifest.json"
             REPO_URL="https://git.zako.shirkneko.top:20004/shirkneko/SukiSU.git"
             if [ "$CHANNEL_KIND" = "latest" ]; then
               CNB_PICK_CI=1
-              echo "最新通道：SukiSU-Nova 取 CNB 滚动 Release（manager-ci）"
+              echo "最新通道：SukiSU-Nova 取 CNB 滚动 manager-ci（manifest）"
             else
               CNB_PICK_CI=0
               echo "正式通道：SukiSU-Nova 取 CNB 最新正式 Release（is_prerelease=false）"
             fi
-            # 自动翻页，避免频繁 CI Release 将正式版或 manager-ci 挤出首页。
+            # 读取 manager-ci 的 manifest；正式通道取不到正式版时回退。
             # here-doc 的 Python 顶层代码与 run 块保持同级，确保 YAML 解析后缩进合法。
             CNB_PICK=$(python3 - "$CNB_PICK_CI" "$CNB_WEB" <<'PY'
           import json, sys, time
           from urllib.request import Request, urlopen
 
           want_ci = sys.argv[1] == "1"
-          base_url = sys.argv[2]
+          manifest_url = sys.argv[2]
           chosen = None
           fallback = None
           fallback_used = 0
-          page = 1
-          fetched = 0
-          while chosen is None:
-            url = f"{base_url}?page={page}&page_size=100"
-            for attempt in range(3):
-              try:
-                request = Request(url, headers={
-                  "Accept": "application/vnd.cnb.web+json",
-                  "User-Agent": "OnePlus-KernelSU-SUSFS-Manager-Check",
-                })
-                with urlopen(request, timeout=60) as response:
-                  payload = json.load(response)
-                break
-              except Exception as exc:
-                if attempt == 2:
-                  raise
-                print(f"获取 CNB Release 列表失败，重试 ({attempt + 1}/3): {exc}", file=sys.stderr)
-                time.sleep(5)
-            releases = payload.get("releases") or []
-            if not releases:
+          payload = None
+          for attempt in range(3):
+            try:
+              request = Request(manifest_url, headers={
+                "Accept": "application/json",
+                "User-Agent": "OnePlus-KernelSU-SUSFS-Manager-Check",
+              })
+              with urlopen(request, timeout=60) as response:
+                payload = json.load(response)
               break
-            fetched += len(releases)
-            if want_ci:
-              chosen = next((r for r in releases
-                             if r.get("tag_ref", "").endswith("/manager-ci")
-                             and any(a.get("name", "").endswith(".apk") for a in r.get("assets", []))), None)
+            except Exception as exc:
+              if attempt == 2:
+                raise
+              print(f"获取 CNB manifest 失败，重试 ({attempt + 1}/3): {exc}", file=sys.stderr)
+              time.sleep(5)
+          if payload is None:
+            sys.exit(1)
+          apks = [a for a in payload.get("assets", []) if a.get("name", "").endswith(".apk")]
+          if want_ci:
+            chosen = payload if apks else None
+          else:
+            if not payload.get("is_draft") and not payload.get("prerelease"):
+              chosen = payload if apks else None
             else:
-              if fallback is None:
-                fallback = next((r for r in releases
-                                 if r.get("tag_ref", "").endswith("/manager-ci")
-                                 and any(a.get("name", "").endswith(".apk") for a in r.get("assets", []))), None)
-              chosen = next((r for r in releases
-                             if not r.get("is_prerelease") and not r.get("is_draft")
-                             and any(a.get("name", "").endswith(".apk") for a in r.get("assets", []))), None)
-            total = int(payload.get("release_count") or 0)
-            if (total and fetched >= total) or (not total and len(releases) < 100):
-              break
-            page += 1
+              fallback = payload if apks else None
           if chosen is None and fallback is not None:
             chosen = fallback
             fallback_used = 1
@@ -250,8 +239,8 @@ jobs:
             0 if "arm64" in a.get("name", "") else
             1 if "universal" in a.get("name", "") else 2))
           apk = apks[0]
-          tag = chosen.get("tag_ref", "").removeprefix("refs/tags/")
-          print(tag, apk.get("name", ""), "https://cnb.cool" + apk.get("path", ""), fallback_used, sep="\t")
+          tag = chosen.get("tag_name", "")
+          print(tag, apk.get("name", ""), apk.get("browser_download_url", ""), fallback_used, sep="\t")
           PY
             ) || true
             if [ -z "$CNB_PICK" ]; then
